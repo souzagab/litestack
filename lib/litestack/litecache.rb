@@ -20,7 +20,7 @@ class Litecache
   include Litemetric::Measurable
 
   # the default options for the cache
-  # can be overriden by passing new options in a hash
+  # can be overridden by passing new options in a hash
   # to Litecache.new
   #   path: "./cache.db"
   #   expiry: 60 * 60 * 24 * 30 -> one month default expiry if none is provided
@@ -71,41 +71,41 @@ class Litecache
   # add a key, value pair to the cache, with an optional expiry value (number of seconds)
   def set(key, value, expires_in = nil)
     key = key.to_s
-    expires_in ||= @expires_in 
-    @conn.acquire do |cache|
-      cache.stmts[:setter].execute!(key, value, expires_in)
+    expires_in ||= @expires_in
+    begin
+      run_stmt(:setter, key, value, expires_in)
       capture(:set, key)
     rescue SQLite3::FullException
-      cache.stmts[:extra_pruner].execute!(0.2)
-      cache.execute("vacuum")
+      transaction do
+        run_stmt(extra_pruner, 0.2)
+        run_sql("vacuum")
+      end
       retry
     end
     true
   end
-  
+
   # set multiple keys and values in one shot set_multi({k1: v1, k2: v2, ... })
   def set_multi(keys_and_values, expires_in = nil)
-    expires_in ||= @expires_in 
+    expires_in ||= @expires_in
     transaction do |conn|
       keys_and_values.each_pair do |k, v|
-        begin
-          key = k.to_s
-          conn.stmts[:setter].execute!(key, v, expires_in)
-          capture(:set, key)
-        rescue SQLite3::FullException
-          conn.stmts[:extra_pruner].execute!(0.2)
-          conn.execute("vacuum")
-          retry
-        end
+        key = k.to_s
+        run_stmt(:setter, key, v, expires_in)
+        capture(:set, key)
+      rescue SQLite3::FullException
+        run_stmt(extra_pruner, 0.2)
+        run_sql("vacuum")
+        retry
       end
     end
-    true    
-  end 
+    true
+  end
 
   # add a key, value pair to the cache, but only if the key doesn't exist, with an optional expiry value (number of seconds)
   def set_unless_exists(key, value, expires_in = nil)
     key = key.to_s
-    expires_in ||= @expires_in 
+    expires_in ||= @expires_in
     changes = 0
     @conn.acquire do |cache|
       cache.transaction(:immediate) do
@@ -125,14 +125,14 @@ class Litecache
   # if the key doesn't exist or it is expired then null will be returned
   def get(key)
     key = key.to_s
-    if (record = @conn.acquire { |cache| cache.stmts[:getter].execute!(key)[0] })
+    if (record = run_stmt(:getter, key)[0])
       capture(:get, key, 1)
       return record[1]
     end
     capture(:get, key, 0)
     nil
   end
-  
+
   # get multiple values by their keys, a hash with values corresponding to the keys
   # is returned,
   def get_multi(*keys)
@@ -140,11 +140,11 @@ class Litecache
     transaction(:deferred) do |conn|
       keys.length.times do |i|
         key = keys[i].to_s
-        if (record = conn.stmts[:getter].execute!(key)[0]) 
+        if (record = run_stmt(:getter, key)[0])
           results[keys[i]] = record[1] # use the original key format
           capture(:get, key, 1)
         else
-          capture(:get, key, 0) 
+          capture(:get, key, 0)
         end
       end
     end
@@ -162,13 +162,13 @@ class Litecache
   end
 
   # increment an integer value by amount, optionally add an expiry value (in seconds)
-  def increment(key, amount=1, expires_in = nil)
-    expires_in ||= @expires_in 
+  def increment(key, amount = 1, expires_in = nil)
+    expires_in ||= @expires_in
     @conn.acquire { |cache| cache.stmts[:incrementer].execute!(key.to_s, amount, expires_in) }
   end
 
   # decrement an integer value by amount, optionally add an expiry value (in seconds)
-  def decrement(key, amount=1, expires_in = nil)
+  def decrement(key, amount = 1, expires_in = nil)
     increment(key, -amount, expires_in)
   end
 
@@ -224,24 +224,11 @@ class Litecache
     }
   end
 
-  # low level access to SQLite transactions, use with caution
-  def transaction(mode=:immediate)
-    @conn.acquire do |cache|
-      if cache.transaction_active?
-        yield
-      else
-        cache.transaction(mode) do
-          yield cache
-        end
-      end
-    end
-  end
-
   private
 
   def setup
     super # create connection
-    @bgthread = spawn_worker # create backgroud pruner thread
+    @bgthread = spawn_worker # create background pruner thread
   end
 
   def spawn_worker
@@ -253,7 +240,7 @@ class Litecache
           retry
         rescue SQLite3::FullException
           cache.stmts[:extra_pruner].execute!(0.2)
-        rescue Exception => e # standard:disable Lint/RescueException
+        rescue Exception # standard:disable Lint/RescueException
           # database is closed
         end
         sleep @options[:sleep_interval]
@@ -262,7 +249,7 @@ class Litecache
   end
 
   def create_connection
-    super("#{__dir__}/litecache.sql.yml") do |conn|
+    super("#{__dir__}/sql/litecache.sql.yml") do |conn|
       conn.cache_size = 2000
       conn.journal_size_limit = [(@options[:size] / 2).to_i, @options[:min_size]].min
       conn.max_page_count = (@options[:size] / conn.page_size).to_i

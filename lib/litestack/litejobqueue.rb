@@ -1,7 +1,7 @@
 # frozen_stringe_literal: true
 
-require_relative "./litequeue"
-require_relative "./litemetric"
+require_relative "litequeue"
+require_relative "litemetric"
 
 ##
 # Litejobqueue is a job queueing and processing system designed for Ruby applications. It is built on top of SQLite, which is an embedded relational database management system that is #lightweight and fast.
@@ -15,7 +15,7 @@ class Litejobqueue < Litequeue
   include Litemetric::Measurable
 
   # the default options for the job queue
-  # can be overriden by passing new options in a hash
+  # can be overridden by passing new options in a hash
   # to Litejobqueue.new, it will also be then passed to the underlying Litequeue object
   #   config_path: "./litejob.yml" -> were to find the configuration file (if any)
   #   path: "./db/queue.db"
@@ -45,6 +45,7 @@ class Litejobqueue < Litequeue
   }
 
   @@queue = nil
+  @@mutex = Litescheduler::Mutex.new
 
   attr_reader :running
 
@@ -53,7 +54,7 @@ class Litejobqueue < Litequeue
   # a method that returns a single instance of the job queue
   # for use by Litejob
   def self.jobqueue(options = {})
-    @@queue ||= Litescheduler.synchronize { new(options) }
+    @@queue ||= @@mutex.synchronize { new(options) }
   end
 
   def self.new(options = {})
@@ -139,17 +140,25 @@ class Litejobqueue < Litequeue
 
   private
 
+  def prepare_search_options(opts)
+    sql_opts = super(opts)
+    sql_opts[:klass] = opts[:klass]
+    sql_opts[:params] = opts[:params]
+    sql_opts
+  end
+
   def exit_callback
     @running = false # stop all workers
-    return unless @jobs_in_flight > 0
-    puts "--- Litejob detected an exit, cleaning up"
-    index = 0
-    while @jobs_in_flight > 0 && index < 30 # 3 seconds grace period for jobs to finish
-      puts "--- Waiting for #{@jobs_in_flight} jobs to finish"
-      sleep 0.1
-      index += 1
+    if @jobs_in_flight > 0
+      puts "--- Litejob detected an exit, cleaning up"
+      index = 0
+      while @jobs_in_flight > 0 && index < 30 # 3 seconds grace period for jobs to finish
+        puts "--- Waiting for #{@jobs_in_flight} jobs to finish"
+        sleep 0.1
+        index += 1
+      end
+      puts " --- Exiting with #{@jobs_in_flight} jobs in flight"
     end
-    puts " --- Exiting with #{@jobs_in_flight} jobs in flight"
   end
 
   def setup
@@ -157,15 +166,15 @@ class Litejobqueue < Litequeue
     @jobs_in_flight = 0
     @workers = @options[:workers].times.collect { create_worker }
     @gc = create_garbage_collector
-    @mutex = Litesupport::Mutex.new
+    @mutex = Litescheduler::Mutex.new # reinitialize a mutex in setup as the environment could change after forking
   end
 
   def job_started
-    Litescheduler.synchronize(@mutex) { @jobs_in_flight += 1 }
+    @mutex.synchronize { @jobs_in_flight += 1 }
   end
 
   def job_finished
-    Litescheduler.synchronize(@mutex) { @jobs_in_flight -= 1 }
+    @mutex.synchronize { @jobs_in_flight -= 1 }
   end
 
   # optionally run a job in its own context
@@ -179,7 +188,8 @@ class Litejobqueue < Litequeue
 
   # create a worker according to environment
   def create_worker
-    return if defined?(Rails) && !defined?(Rails::Server)
+    # temporarily stop this feature until a better solution is implemented
+    # return if defined?(Rails) && !defined?(Rails::Server)
     Litescheduler.spawn do
       worker_sleep_index = 0
       while @running
@@ -202,7 +212,7 @@ class Litejobqueue < Litequeue
         end
         if processed == 0
           sleep @options[:sleep_intervals][worker_sleep_index]
-          worker_sleep_index += 1 if worker_sleep_index < @options[:sleep_intervals].length - 1
+          worker_sleep_index += 1 if worker_sleep_index < (@options[:sleep_intervals].length - 1)
         else
           worker_sleep_index = 0 # reset the index
         end

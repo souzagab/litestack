@@ -15,7 +15,7 @@ class Litedb < ::SQLite3::Database
   # add litesearch support
   include Litesearch
 
-  # overrride the original initilaizer to allow for connection configuration
+  # override the original initilaizer to allow for connection configuration
   def initialize(file, options = {}, zfs = nil)
     if block_given?
       super(file, options, zfs) do |db|
@@ -29,6 +29,10 @@ class Litedb < ::SQLite3::Database
     @running = true
     @collecting_metrics = options[:metrics]
     collect_metrics if @collecting_metrics
+  end
+
+  def sqlite_version
+    SQLite3::SQLITE_VERSION_NUMBER
   end
 
   def collecting_metrics?

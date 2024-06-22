@@ -2,7 +2,7 @@
 
 require "singleton"
 
-require_relative "./litesupport"
+require_relative "litesupport"
 
 # this class is a singleton
 # and should remain so
@@ -148,10 +148,11 @@ class Litemetric
   end
 
   def exit_callback
-    return unless @collector.count > 0
-    warn "--- Litemetric detected an exit, flushing metrics"
     @running = false
-    @collector.flush
+    if @collector.count > 0
+      warn "--- Litemetric detected an exit, flushing metrics"
+      @collector.flush
+    end
   end
 
   def setup
@@ -165,7 +166,7 @@ class Litemetric
   end
 
   def create_connection
-    super("#{__dir__}/litemetric.sql.yml") do |conn|
+    super("#{__dir__}/sql/litemetric.sql.yml") do |conn|
       conn.wal_autocheckpoint = 10000 # checkpoint after 10000 pages are written
     end
   end
@@ -203,8 +204,8 @@ class Litemetric
     def create_snapshotter
       Litescheduler.spawn do
         while @running
-          sleep @litemetric.options[:snapshot_interval]
           capture_snapshot
+          sleep @litemetric.options[:snapshot_interval]
         end
       end
     end
@@ -275,7 +276,7 @@ class Litemetric
     def capture_single_key(topic, event, key, value, time = nil)
       run_stmt(:capture_event, topic.to_s, event.to_s, key.to_s, time, 1, value)
     end
-    
+
     def count
       run_stmt(:event_count)[0][0]
     end
@@ -296,7 +297,7 @@ class Litemetric
     end
 
     def create_connection
-      super("#{__dir__}/litemetric_collector.sql.yml") do |conn|
+      super("#{__dir__}/sql/litemetric_collector.sql.yml") do |conn|
         conn.execute("ATTACH ? as m", @options[:dbpath].to_s)
         conn.wal_autocheckpoint = 10000
       end
