@@ -1,4 +1,5 @@
 require_relative "../../litestack/litedb"
+
 require "active_record"
 require "active_record/connection_adapters/sqlite3_adapter"
 require "active_record/tasks/sqlite_database_tasks"
@@ -89,4 +90,11 @@ module ActiveRecord
       register_task(/litedb/, "ActiveRecord::Tasks::LitedbDatabaseTasks")
     end
   end
+end
+
+if ActiveRecord::ConnectionAdapters.respond_to?(:register)
+  ActiveRecord::ConnectionAdapters.register(
+    "litedb", "ActiveRecord::ConnectionAdapters::LitedbAdapter",
+    "active_record/connection_adapters/litedb_adapter"
+  )
 end

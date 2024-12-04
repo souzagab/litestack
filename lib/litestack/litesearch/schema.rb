@@ -1,4 +1,4 @@
-require_relative "./schema_adapters"
+require_relative "schema_adapters"
 
 class Litesearch::Schema
   TOKENIZERS = {
@@ -34,6 +34,10 @@ class Litesearch::Schema
     @schema[:fields] = {} unless @schema[:fields]
   end
 
+  def merge(other_schema)
+    @schema.merge!(other_schema.schema)
+  end
+
   # schema definition API
   def name(new_name)
     @schema[:name] = new_name
@@ -46,6 +50,10 @@ class Litesearch::Schema
 
   def table(table_name)
     @schema[:table] = table_name
+  end
+
+  def primary_key(new_primary_key)
+    @schema[:primary_key] = new_primary_key
   end
 
   def fields(field_names)
@@ -181,7 +189,7 @@ class Litesearch::Schema
   end
 
   def allowed_attributes
-    [:weight, :col, :target]
+    [:weight, :col, :target, :source, :conditions, :reference, :primary_key]
   end
 end
 
